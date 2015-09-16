@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="utf-8">
+	<title>WOI Game Report Charts</title>
+	<script src="//cdnjs.cloudflare.com/ajax/libs/d3/3.5.5/d3.min.js"></script>
+	<link rel="stylesheet" type="text/css" href="woi-game-report.css">
+</head>
+<body>
+	<svg id="running-tally"></svg>
+	<svg id="shift-chart"></svg>
+</body>
+<script>
+
+/*
+*
+* Query for data
+*
+*/
+
+var season = "2014";
+var gameId = "30314";
+var flaskUrl = "http://datarink.com/databot/get-game-data/?";
+var jsonUrl = flaskUrl + "season=" + season + "&gameId=" + gameId;
+
+var teams = ["away", "home"];
+var teamColours = ["blue", "red"];
+var periodData;
+var corsiData;
+var powerplayData;
+
+var shiftData;
+var playerData;
+var teammatePairingData;
+
+d3.json(jsonUrl, function(error, json) {
+
+	var teamData = json.filter(function(d) { return d.type === "teams"; });
+	teams = [teamData[0].away, teamData[0].home];
+
+	periodData = json.filter(function(d) { return d.type === "period"; });
+	powerplayData = json.filter(function(d) { return d.type === "powerplay"; });
+	corsiData = json.filter(function(d) { return d.type === "event"; })
+		.sort(function(a, b) { return x(toSecs(a.period, a.time)) - x(toSecs(b.period, b.time)); });
+	playerData = json.filter(function(d) { return d.type === "player"; });
+	shiftData = json.filter(function(d) { return d.type === "shift"; });
+	teammatePairingData = json.filter(function(d) { return d.type === "teammates"; });
+
+	// Remove periods from team names
+	teams.forEach(function(d, i) { teams[i] = d.replace(".", ""); });
+	powerplayData.forEach(function(d) { d.team = d.team.replace(".", ""); });
+	corsiData.forEach(function(d) { d.eventTeam = d.eventTeam.replace(".", ""); });
+	playerData.forEach(function(d) { d.team = d.team.replace(".", ""); });
+	teammatePairingData.forEach(function(d) { d.team = d.team.replace(".", ""); });
+
+	// Nest shift data and append player metadata
+	shiftData = d3.nest()
+		.key(function(d) { return d.playerId; })
+		.entries(shiftData);
+	shiftData.forEach(function(d) {
+		d.key = +d.key;
+
+		var playerProperties = playerData.filter(function(p) { return p.type === "player" && p.playerId === d.key; })[0];
+		d.playerId = playerProperties.playerId;
+		d.name = playerProperties.name;
+		d.number = playerProperties.number;
+		d.position = playerProperties.position;
+		d.team = playerProperties.team;
+		d.toi = playerProperties.toi;
+	});
+
+	// Split up pairing keys in the pairing dataset
+	teammatePairingData.forEach(function(pair) {
+		pair.p1 = +pair.playerIds.substring(0, pair.playerIds.indexOf("&"));
+		pair.p2 = +pair.playerIds.substring(pair.playerIds.indexOf("&") + 1);
+	});
+
+	// Remove all data involving goalies
+	var goaliePlayerIds = playerData.filter(function(d) { return d.position === "g"; })
+		.map(function(d) { return d.playerId; });
+	teammatePairingData = teammatePairingData.filter(function(d) { return goaliePlayerIds.indexOf(d.p1) < 0 && goaliePlayerIds.indexOf(d.p2) < 0; });
+	playerData = playerData.filter(function(d) { return d.position !== "g"; });
+	shiftData = shiftData.filter(function(d) { return d.position !== "g"; });
+
+	/*
+	*
+	* Group players by shift similarity
+	*
+	*/
+
+	// Group players and set the player display order
+	teams.forEach(function(t) {
+		groupPlayers(t);
+	});
+
+	shiftData = shiftData.sort(function(a, b) {
+		var aScore = 0;
+		var bScore = 0;
+
+		// The home team is displayed after the away team
+		if (a.team === teams[1]) aScore += 1000;
+		if (b.team === teams[1]) bScore += 1000;
+
+		// The home team's defensemen are displayed last; the away team's defensemen are displayed first
+		if (a.team === teams[1] && a.position === "d") aScore += 500;
+		else if (a.team !== teams[1] && a.position !== "d") aScore += 100;
+		if (b.team === teams[1] && b.position === "d") bScore += 500;
+		else if (b.team !== teams[1] && b.position !== "d") bScore += 100;
+
+		// Adjust the order returned from the groupPlayers function
+		// The away team's players are displayed in ascending TOI; descending TOI for the home team
+		var adjAOrder = a.order;
+		var adjBOrder = b.order;
+		if (a.team === b.team && a.team !== teams[1]) {
+			adjAOrder = 90 - a.order;
+			adjBOrder = 90 - b.order;
+		}
+		aScore += adjAOrder;
+		bScore += adjBOrder;
+
+		return aScore - bScore;
+	});
+
+	/*
+	*
+	* Identify hot and cold streaks
+	*
+	*/
+
+	// Sort each player's shifts
+	shiftData.forEach(function(d) {
+		d.values = d.values.sort(function(a, b) {
+			if (b.period === a.period) {
+				return a.end - b.end;
+			} else {
+				return a.period - b.period;
+			}
+		});
+	});
+
+	// Append shift outcome to each shift
+	// Loop through players
+	shiftData.forEach(function(p) {
+		// Loop through the player's shifts
+		p.values.forEach(function(s) {
+
+			// Count the number of corsi-for and corsi-against events for the player during this shift
+			var cf = 0;
+			var ca = 0;
+			var shiftEvents = corsiData.filter(function(e) { return e.period === s.period && e.time >= s.start && e.time <= s.end; });
+			shiftEvents.forEach(function(e) {
+				if (e.eventTeam === p.team) cf++;
+				else ca++;
+			});
+			s.cf = cf;
+			s.ca = ca;
+		});
+
+		// Get total CF and CA
+		p.totalCf = d3.sum(p.values, function(s) { return s.cf; });
+		p.totalCa = d3.sum(p.values, function(s) { return s.ca; });
+	});
+
+	// Check for hot and cold streaks
+	shiftData.forEach(function(d) {
+		for (var s = 0; s < d.values.length; s++) {
+			d.values[s].streak = 0;
+
+			var streakLength = 3;
+
+			if (s >= streakLength - 1) {
+				// Determine if there's a streak of any kind
+				var streakCounter = 0;
+				for (var i = 0; i < streakLength; i++) {
+					if (d.values[s - i].cf - d.values[s - i].ca > 0) { streakCounter++; }
+					else if (d.values[s - i].cf - d.values[s - i].ca < 0) { streakCounter--; }
+				}
+				// Determine if the streak is positive or negative
+				var streak = 0;
+				if (streakCounter === streakLength) { streak = 1; }
+				else if (streakCounter === -streakLength) { streak = -1; }
+				// Record streak
+				if (streak !== 0) {
+					for (var i = 0; i < streakLength; i++) {
+						d.values[s - i].streak = streak;
+					}
+				}
+			}
+		}
+	});
+
+	// Turn shift data into an array: [away shift data, home shift data]
+	shiftData = [shiftData.filter(function(d) { return d.team === teams[0]; }),
+		shiftData.filter(function(d) { return d.team === teams[1]; })];
+
+	initStepChart();
+});
+
+/*
+*
+* Initialize step chart layout
+*
+*/
+
+var svgWidth = 960;
+var svgHeight = 320;
+var margin = {top: 10, right: 100, bottom: 40, left: 20};
+var x = d3.scale.linear();
+var y = d3.scale.linear();
+
+function initStepChart() {
+
+	var svg = d3.select("#running-tally")
+		.attr("width", svgWidth)
+		.attr("height", svgHeight)
+		.append("g")
+			.attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+	// Exclude margins from the scale ranges
+	x.range([0, svgWidth - margin.left - margin.right]);
+	y.range([svgHeight - margin.top - margin.bottom, 0]);
+
+	// Append groups to control layers
+	svg.append("g").attr("class", "x axis")
+	svg.append("g").attr("class", "y axis")
+	svg.append("g").attr("class", "powerplays");
+	svg.append("g").attr("class", "goals");
+	teams.forEach(function(team, j) {
+		var teamGroup = svg.append("g")
+			.attr("class", team);
+	});
+
+	updateStepChart();
+}
+
+function updateStepChart() {
+
+	var svg = d3.select("#running-tally").select("g");
+
+	// Set domains
+	x.domain([0, d3.sum(periodData, function(d) { return d.duration; })]);
+
+	var homeCfCount = corsiData.filter(function(d) { return d.eventTeam === teams[1]; }).length;
+	var awayCfCount = corsiData.filter(function(d) { return d.eventTeam === teams[0]; }).length;
+	y.domain([0, d3.max([awayCfCount, homeCfCount, 50])]); // Set a minimum number of corsis to prevent the chart range from being too small
+	y.domain([0, 10 * Math.ceil(y.domain()[1] / 10)]); // Round y-domain up to the next multiple of 10
+
+	// Draw x-axis
+	var xAxis = d3.svg.axis()
+		.scale(x)
+		.orient("bottom")
+		.tickPadding(-16)
+		.tickSize(margin.bottom)
+		.tickValues(d3.range(5 * 60, (x.domain()[1]) + 1, 5 * 60))
+		.tickFormat(function(d) { return d / 60; });
+	var gx = svg.select("g.x.axis")
+		.call(xAxis);
+	gx.attr("transform", "translate(0," + y.range()[0] + ")");
+	gx.selectAll("text")
+		.classed("period-marker", function(d) {
+			var minutes = d / 60;
+			if (minutes % 20 === 0) { return true; }
+			else { return false; }
+		});
+
+	// Draw y-axis
+	var yAxis = d3.svg.axis()
+	    .scale(y)
+	    .tickValues(d3.range(0, y.domain()[1] + 1, 10))
+	    .tickSize(x.range()[1])
+	    .tickPadding(5)
+	    .orient("right");
+	var gy = svg.select("g.y.axis")
+		.call(yAxis);
+
+	// Redraw the y-axis - now that we know the number of ticks, we can format the first and last ticks
+	var tickCount = svg.select("g.y.axis").selectAll("g.tick").size();
+	yAxis.tickFormat(function (d, i) {
+			if (i === tickCount - 1) { return d + " corsis"; }
+			else if (i === 0) { return ""; }
+			else { return d; }
+		});
+	svg.select("g.y.axis")
+		.call(yAxis);
+	gy.selectAll("text")
+		.attr("x", 0)
+		.attr("dy", 12);
+
+	// Powerplay markers
+	var ppRects = svg.select("g.powerplays").selectAll("rect.powerplay")
+		.data(powerplayData);
+	ppRects.enter().append("rect")
+		.attr("class", "powerplay");
+	ppRects.attr("x", function(d) { return x(toSecs(d.period, d.start)); })
+		.attr("width", function(d) { return x(toSecs(d.period, d.end)) - x(toSecs(d.period, d.start)); })
+		.attr("y", 0)
+		.attr("height", y.range()[0])
+		.attr("fill", function(d) { return teamColours[teams.indexOf(d.team)]; });
+
+	// Corsi lines
+	teams.forEach(function(team, j) {
+		var teamGroup = svg.select("g." + team);
+		var teamCorsiData = corsiData.filter(function(d) { return d.eventTeam === team; });
+		var teamCorsis = teamGroup.selectAll("line.corsi")
+			.data(teamCorsiData);
+		teamCorsis.enter().append("line")
+			.attr("class", "corsi")
+			.attr("x1", function(d) { return x(toSecs(d.period, d.time)); })
+			.attr("x2", function(d, i) {
+				var nextCorsi = teamCorsiData[i + 1];
+				var x2;
+				if (nextCorsi) { x2 = x(toSecs(nextCorsi.period, nextCorsi.time)); }
+				else { x2 = x.range()[1]; }
+
+				// Set a minimum length
+				var x1 = x(toSecs(d.period, d.time));
+				if (x2 - x1 >= 3) { return x2; }
+				else { return x1 + 3; }
+			})
+			.attr("y1", function(d, i) { return y(i + 1); })
+			.attr("y2", function(d, i) { return y(i + 1); })
+			.attr("stroke", function() { return teamColours[j]; });
+	});
+
+	// Goal lines
+	var goalLines = svg.select("g.goals").selectAll("line.goal")
+		.data(corsiData.filter(function(d) { return d.eventType === "goal"; }));
+	goalLines.enter().append("line")
+		.attr("class", "goal")
+		.attr("y1", y.range()[0])
+		.attr("y2", y.range()[1])
+		.attr("x1", function(d) { return x(toSecs(d.period, d.time)); })
+		.attr("x2", function(d) { return x(toSecs(d.period, d.time)); })
+		.attr("stroke", function(d) { return teamColours[teams.indexOf(d.eventTeam)]; });
+
+	// Goal counts
+	teams.forEach(function(team, j) {
+		var goalLabels = svg.select("g.goals").selectAll("text.goal." + team)
+			.data(corsiData.filter(function(d) { return d.eventType === "goal" && d.eventTeam === team; }));
+		goalLabels.enter().append("text")
+			.attr("class", "goal " + team)
+			.attr("y", y.range()[0] + 14)
+			.attr("x", function(d) { return x(toSecs(d.period, d.time)); })
+			.attr("fill", function(d) { return teamColours[j]; })
+			.html(function(d, i) { return i + 1; });
+	});
+
+
+	initShiftChart();
+}
+
+/*
+*
+* Initialize shift chart layout
+*
+*/
+
+function initShiftChart() {
+
+	var rowHeight = 16;
+	var vGap = 16;
+
+	var svg = d3.select("#shift-chart")
+		.attr("width", svgWidth)
+		.attr("height", (shiftData[0].length + shiftData[1].length) * rowHeight + vGap)
+		.append("g")
+			.attr("transform", "translate(" + margin.left + ",0)");
+
+	// Create a y-scale for each team
+	var shiftY = [];
+	teams.forEach(function(team, i) {
+		shiftY[i] = d3.scale.ordinal()
+			.domain(shiftData[i].map(function(d) { return d.playerId; }))
+			.rangePoints([0, shiftData[i].length * rowHeight], 1);
+	});
+
+	// Append a group for each team
+	svg.selectAll("g.shifts.team")
+		.data(teams)
+		.enter().append("g")
+			.attr("class", "shifts team")
+			.attr("id", function(d) { return d; })
+			.attr("transform", function(d, i) {
+				return "translate(0," + (i * (shiftData[i].length * rowHeight + vGap)) + ")";
+			});
+
+	// For each team, append groups for players on the team
+	teams.forEach(function(team, i) {
+		svg.select("#" + team).selectAll("g.player")
+			.data(shiftData[i])
+			.enter().append("g")
+				.attr("id", function(d) { return d.playerId; })
+				.attr("class", "player")
+				.attr("transform", function(d) {
+					return "translate(0," + shiftY[i](d.playerId) + ")";
+				});
+	});
+
+	var shiftBars = svg.selectAll("g.player").selectAll("line.shift")
+		.data(function(d) { return d.values; });
+	shiftBars.enter().append("line")
+		.attr("class", "shift")
+		.attr("x1", function(d) { return x(toSecs(d.period, d.start)); })
+		.attr("x2", function(d) { return x(toSecs(d.period, d.end)); })
+		.attr("y1", rowHeight / 2)
+		.attr("y2", rowHeight / 2)
+		.style("stroke", function(d, i) {
+			var playerData = d3.select(this.parentNode).datum();
+			var team = playerData.team;
+			if (d.streak > 0) {
+				return teamColours[teams.indexOf(team)];
+			} else if (d.streak < 0) {
+				if (teams.indexOf(team) === 0) { return teamColours[1]; }
+				else { return teamColours[0]; }
+			} else {
+				return "#777";
+			}
+		})
+		.style("stroke-opacity", 0.1)
+		.style("stroke-width", 15);
+
+}
+
+// Converts a period and time to total number of seconds from the start of the game
+function toSecs(period, time) {
+	var totalSecs = d3.sum(periodData.filter(function(d) { return d.period < period; }), function(d) { return d.duration; });
+	totalSecs += time;
+	return totalSecs;
+}
+
+function groupPlayers(team) {
+
+	/*
+	*
+	* Prepare data needed to group players
+	*
+	*/
+
+	// Get pairing data for specified team
+	// Append individual TOIs, and shift similarity to data
+	var pairingData = teammatePairingData.filter(function(d) { return d.team === team; });
+	pairingData.forEach(function(pair) {
+		pair.p1Toi = playerData.filter(function(d) { return d.team === team && d.playerId === pair.p1; })[0].ev5Toi;
+		pair.p2Toi = playerData.filter(function(d) { return d.team === team && d.playerId === pair.p2; })[0].ev5Toi;
+		pair.shiftSimilarity = pair.toi / (pair.p1Toi + pair.p2Toi - pair.toi);
+	});
+
+	/*
+	*
+	* Group players by shift similarity
+	*
+	*/
+
+	var playerSets = [];
+	var ungroupedPlayers = playerData.filter(function(d) { return d.team === team; })
+		.map(function(d) { return d.playerId; });
+
+	// Sort pairings by descending similarity, then start grouping players with the highest shift similarities
+	var minSimilarity = 0.5;
+	pairingData = pairingData.sort(function(a, b) { return b.shiftSimilarity - a.shiftSimilarity; });
+	pairingData.forEach(function(pair) {
+		if (pair.shiftSimilarity >= minSimilarity) {
+
+			var grouped = false;
+
+			// If 1 or more player sets exist, then check to see if the current pair should be added to an existing set
+			var i = 0;
+			while (!grouped && i < playerSets.length) {
+				if (playerSets[i].indexOf(pair.p1) >= 0 && playerSets[i].indexOf(pair.p2) < 0) {
+					// If an existing set contains p1 but not p2, add p2 to the existing set
+					playerSets[i].push(pair.p2);
+					grouped = true;
+				} else if (playerSets[i].indexOf(pair.p1) < 0 && playerSets[i].indexOf(pair.p2) >= 0) {
+					// If an existing set contains p2 but not p1, add p1 to the existing set
+					playerSets[i].push(pair.p1);
+					grouped = true;
+				} else if (playerSets[i].indexOf(pair.p1) >= 0 && playerSets[i].indexOf(pair.p2) >= 0) {
+					// If an existing set already contains both p1 and p2, then no updates needed
+					grouped = true;
+				}
+				i++;
+			}
+
+			// If the existing pair doesn't belong to any existing player set, then create a new set
+			if (!grouped) {
+				playerSets.push([pair.p1, pair.p2]);
+			}
+
+			// Remove the grouped players from the list of ungrouped players
+			[pair.p1, pair.p2].forEach(function(p) {
+				var deleteIndex = ungroupedPlayers.indexOf(p);
+				if (deleteIndex >= 0) {
+					ungroupedPlayers.splice(deleteIndex, 1);
+				}
+			});
+		}
+	});
+
+	// For testing: Print player sets with names
+	// playerSets.forEach(function(set) {
+	// 	var names = [];
+	// 	set.forEach(function(p) {
+	// 		playerName = playerData.filter(function(d) { return d.team === team && d.playerId === p; })[0].name;
+	// 		names.push(playerName);
+	// 	});
+	// 	console.log(names);
+	// });
+
+	/*
+	*
+	* Sort all the sets and ungrouped players by descending TOI
+	*
+	*/
+
+	var sortedPlayers = [];
+
+	// Add the player sets to the list to be sorted
+	// Sets will be sorted based on their average TOI
+	playerSets.forEach(function(set) {
+
+		// Get the shift data for each player in the set
+		// Sort the players by descending TOI
+		var setPlayers = shiftData.filter(function(p) { return set.indexOf(p.playerId) >= 0; });
+		setPlayers.sort(function(a, b) { return b.toi - a.toi; });
+
+		sortedPlayers.push({
+			players: set,
+			toi: d3.mean(setPlayers, function(p) { return p.toi; })
+		});
+	});
+
+	// Add the ungrouped players to the list to be sorted
+	ungroupedPlayers.forEach(function(player) {
+		var thisPlayerData = shiftData.filter(function(p) { return p.playerId === player; });
+		sortedPlayers.push({
+			players: [player],
+			toi: thisPlayerData[0].toi
+		});
+	});
+
+	// Sort the combined list of sets and ungrouped players by descending TOI
+	sortedPlayers.sort(function(a, b) { return b.toi - a.toi; });
+
+	// Convert the sorted players into a flat list
+	sortedPlayers = sortedPlayers.map(function(d) { return d.players; });
+	sortedPlayers = [].concat.apply([], sortedPlayers);
+
+	// Record the sort order in the shiftData
+	shiftData.filter(function(p) { return p.team === team; })
+		.forEach(function(p) {
+			p.order = sortedPlayers.indexOf(p.playerId);
+		});
+}
+</script>
+</html>
