@@ -10,6 +10,10 @@ svg {
 	fill: #ccc;
 }
 
+	.x.axis text {
+		fill: none;
+	}
+
 .axis path {
 	display: none;
 }
@@ -19,9 +23,13 @@ svg {
 	stroke: #eee;
 }
 
+	.x.axis line {
+		stroke: #e0e0e0;
+	}
+
 line.corsi {
 	stroke-width: 2px;
-	stroke-opacity: 0.6;
+	stroke-opacity: 0.5;
 }
 
 line.goal {
