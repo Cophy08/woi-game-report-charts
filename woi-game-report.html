@@ -415,6 +415,17 @@ function initShiftChart() {
 				});
 	});
 
+	// Powerplay markers
+	// var ppRects = svg.selectAll("rect.powerplay")
+	// 	.data(powerplayData);
+	// ppRects.enter().append("rect")
+	// 	.attr("class", "powerplay");
+	// ppRects.attr("x", function(d) { return x(toSecs(d.period, d.start)); })
+	// 	.attr("width", function(d) { return x(toSecs(d.period, d.end)) - x(toSecs(d.period, d.start)); })
+	// 	.attr("y", 0)
+	// 	.attr("height", (shiftData[0].length + shiftData[1].length) * rowHeight + vGap + shiftChartTopMargin)
+	// 	.attr("fill", function(d) { return teamColours[teams.indexOf(d.team)]; });
+
 	// Append shift bars
 	var shiftBars = svg.selectAll("g.player").selectAll("line.shift")
 		.data(function(d) { return d.values; });
@@ -425,18 +436,95 @@ function initShiftChart() {
 		.attr("y1", rowHeight / 2)
 		.attr("y2", rowHeight / 2)
 		.style("stroke", function(d, i) {
+			return "#f2f2f2";
+			// var team = d3.select(this.parentNode).datum().team;
+			// if (d.streak > 0) {
+			// 	return teamColours[teams.indexOf(team)];
+			// } else if (d.streak < 0) {
+			// 	if (teams.indexOf(team) === 0) { return teamColours[1]; }
+			// 	else { return teamColours[0]; }
+			// } else {
+			// 	return "#777";
+			// }
+		})
+		.style("stroke-opacity", 1)
+		.style("stroke-width", 15);
+
+	// Append powerplay overlays on shifts
+	var shiftOverlays = svg.selectAll("g.player").selectAll("line.overlay")
+		.data(function(d) {
+			var overlayData = [];
+
+			d.values.forEach(function(s) {
+				powerplayData.forEach(function(p) {
+					var shiftInterval = [toSecs(s.period, s.start), toSecs(s.period, s.end)];
+					var ppInterval = [toSecs(p.period, p.start), toSecs(p.period, p.end)];
+
+					// If there's an overlap in the 2 ranges, then append the overlap to the overlay data
+					if (Math.max(shiftInterval[0], ppInterval[0]) <= Math.min(shiftInterval[1], ppInterval[1])) {
+						overlayData.push({
+							start: Math.max(shiftInterval[0], ppInterval[0]),
+							end: Math.min(shiftInterval[1], ppInterval[1]),
+							team: p.team
+						});
+					}
+				});
+			});
+
+			return overlayData;
+		});
+
+	shiftOverlays.enter().append("line")
+		.attr("class", "overlay")
+		.attr("x1", function(d) { return x(d.start); })
+		.attr("x2", function(d) { return x(d.end); })
+		.attr("y1", rowHeight / 2)
+		.attr("y2", rowHeight / 2)
+		.style("stroke", function(d) {
+			if (teamColours[teams.indexOf(d.team)] === "blue") { return "#e7e7ff"; }
+			else { return "#ffe7e7"; }
+			//return teamColours[teams.indexOf(d.team)];
+		})
+		.style("stroke-opacity", 1)
+		.style("stroke-width", 15);
+
+	// Streak markers
+	var streakBars = svg.selectAll("g.player").selectAll("line.streak")
+		.data(function(d) { return d.values.filter(function(s) { return s.streak < 0 || s.streak > 0; }); });
+	streakBars.enter().append("line")
+		.attr("class", "streak")
+		.attr("x1", function(d) { return x(toSecs(d.period, d.start)); })
+		.attr("x2", function(d) { return x(toSecs(d.period, d.end)); })
+		.attr("y1", rowHeight / 2)
+		.attr("y2", rowHeight / 2)
+		.style("stroke", function(d, i) {
 			var team = d3.select(this.parentNode).datum().team;
 			if (d.streak > 0) {
-				return teamColours[teams.indexOf(team)];
-			} else if (d.streak < 0) {
-				if (teams.indexOf(team) === 0) { return teamColours[1]; }
-				else { return teamColours[0]; }
+				if (teamColours[teams.indexOf(team)] === "blue") { return "#99f"; }
+				else { return "#f99"; }
 			} else {
-				return "#777";
+				if (teamColours[teams.indexOf(team)] === "blue") { return "#f99"; }
+				else { return "#99f"; }
 			}
 		})
-		.style("stroke-opacity", 0.1)
-		.style("stroke-width", 15);
+		// .style("stroke-dasharray", "1,1")
+		.style("stroke-width", 1);
+
+	// Streak markers
+	// var streakBars = svg.selectAll("g.player").selectAll("text.streak")
+	// 	.data(function(d) { return d.values.filter(function(s) { return s.streak < 0 || s.streak > 0; }); });
+	// streakBars.enter().append("text")
+	// 	.attr("class", "streak")
+	// 	.attr("x", function(d) { return x((toSecs(d.period, d.start) + toSecs(d.period, d.end)) / 2); })
+	// 	.attr("y", rowHeight / 2 + 3)
+	// 	.style("fill-opacity", 0.2)
+	// 	.text(function(d) {
+	// 		if (d.streak > 0) {
+	// 			return "+";
+	// 		} else {
+	// 			return "–"; // en dash
+	// 		}
+	// 	});
 
 	// Goal lines
 	var goalLines = svg.selectAll("line.goal")
