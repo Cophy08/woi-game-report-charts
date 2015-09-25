@@ -13,8 +13,12 @@
 
 var inFile = "combos_sample2.csv";
 var game = 21201;
+
 var data = [];
-var playerDict = [];
+var nestedData = [];
+
+var numDLines = 3;
+var numOLines = 4;
 
 /*
 *
@@ -23,8 +27,7 @@ var playerDict = [];
 */
 
 d3.csv(inFile, function(d) {
-	// Accessor function
-	// Filter out data belonging to other games
+	// Accessor function - used to filter out data belonging to other games
 	if (+d.gcode === game) {
 
 		// Only return rows for 3F combinations and 2D combinations
@@ -39,19 +42,19 @@ d3.csv(inFile, function(d) {
 		}
 
 		// Store line data
-		// score.diff.cat: 0 = away leading by 3+ ... 3 = tied ... 6 = home leading by 3+
-		// strength.cat: relative to the home team, so 5v4 is 5 home skaters, 4 away
 		if (lineType === "d" || lineType === "f") {
 			var dataPt = {
 				type: "d",
 				ca: +d.CA,
 				cf: +d.CF,
+				ga: +d.GA,
 				toi: +d.TOI,
 				players: [d.p1, d.p2],
 				names: [d["NAME.1"], d["NAME.2"]],
 				positions: [d["POS.1"], d["POS.2"]],
-				scoreDiff: +d["score.diff.cat"],
-				strengthDiff: d["strength.cat"],
+				goals: [d["p1G"], d["p2G"]],
+				scoreDiff: +d["score.diff.cat"], // 0 = away leading by 3+ ... 3 = tied ... 6 = home leading by 3+
+				strengthDiff: d["strength.cat"], // Relative to the home team - e.g., 5v4 is 5 home skaters, 4 away
 				period: +d.period,
 				team: d.team,
 				venue: d.venue
@@ -61,27 +64,23 @@ d3.csv(inFile, function(d) {
 				dataPt.type = "f";
 				dataPt.players.push(d.p3);
 				dataPt.names.push(d["NAME.3"]);
+				dataPt.goals.push(d["p3G"]);
 				dataPt.positions.push(d["POS.3"]);
 			}
 			return dataPt;
 		}
 	}
 }, function(error, rows) {
-	// Callback function
-	// Nest data by period (or score situation or strengths)
-	// Then nest by "home" and "away"
-	// Then nest by line type: "f" or "d"
-	// Then nest by line - each line will have multiple rows of data (one row for each combination of scoreDiff and strengthDiff)
+	// Callback function - used to nest data
 	data = rows;
-	nestedData = [];
 	nestedData = d3.nest()
-		.key(function(d) { return d.period; })
-		.key(function(d) { return d.venue + "&" + d.team; })
-		.key(function(d) { return d.type; })
-		.key(function(d) { return d.players; })
+		.key(function(d) { return d.period; }) // Nest data by period (or score situation or strengths)
+		.key(function(d) { return d.venue + "&" + d.team; }) // Then nest by "home" and "away"
+		.key(function(d) { return d.type; }) // Then nest by line type: "f" or "d"
+		.key(function(d) { return d.players; }) // Then nest by line - each line will have multiple rows of data (one row for each combination of scoreDiff and strengthDiff)
 		.entries(data);
 
-	// Restore meta data to the parent data elements
+	// Restore meta data to each level of the nested data
 	nestedData.forEach(function(period) {
 		period.values.forEach(function(team) {
 			team.venue = team.key.substring(0, team.key.indexOf("&"));
@@ -101,29 +100,9 @@ d3.csv(inFile, function(d) {
 
 /*
 *
-* Load csv
+* Update data based on selected scoreDiff and strengthDiff
 *
 */
-
-var numLines = 4;
-var lineHeight = 24;
-var lineWidth = 150;
-
-var numBlocks = 3;
-var blockHGap = lineWidth / 2;
-var blockVGap = lineHeight;
-
-var blockHeight = 3 * lineHeight;
-var blockWidth = numLines * lineWidth;
-
-var svgWidth = numBlocks * (blockWidth + blockHGap) - blockHGap;
-var svgHeight = numBlocks * (blockHeight + blockVGap) - blockVGap;
-
-var nestedData = [];
-var lineData = [];
-
-var scoreDiff = 4;
-var strengthDiff = "all";
 
 function updateData() {
 
@@ -160,17 +139,16 @@ function updateData() {
 				// Sort the lines by their total toi, then pick the top X lines, but without repeating players
 				lineType.values = lineType.values.sort(function(a, b) { return b.toi - a.toi; });
 
-				var limit = 4;
-				if (lineType.key === "d") { limit = 3; }
-
 				var includedPlayers = [];
 				var lineCount = 0;
+				var limit = numOLines;
+				if (lineType.key === "d") { limit = numDLines; }
 
 				lineType.values.forEach(function(line) {
-
 					line.isDisplayed = false;
 					if (lineCount < limit) {
 						var addLine = true;
+						// Don't add the line if it's player is already included in another displayed line with higher toi
 						line.players.forEach(function(p) {
 							if (includedPlayers.indexOf(p) >= 0) { addLine = false; }
 						})
@@ -187,27 +165,26 @@ function updateData() {
 
 	/*
 	*
-	* For the displayed lines, identify player movements
+	* For the displayed lines, identify each player's line in the previous period
 	*
 	*/
 
 	nestedData.forEach(function(period, periodIdx) {
-
 		period.values.forEach(function(team, teamIdx) {
 			team.values.forEach(function(lineType, lineTypeIdx) {
 				lineType.values.forEach(function(line) {
 
-					// Get the displayed lines from the previous period (for the same team and lineType) - blank if there's no previous period
+					// Get the displayed lines from the previous period (for the same team and lineType)
 					var prevLines = [];
 					if (periodIdx > 0) {
 						nestedData[periodIdx - 1].values[teamIdx].values[lineTypeIdx].values;
 						prevLines = prevLines.filter(function(d) { return d.isDisplayed === true; });
 					}
 
-					// Array to store each player's previous line (stored in the same order as the player ids)
+					// Array to store each player's previous line - stored in the same order as the line's player ids
 					var playersPrevLines = [];
 
-					// Get the player's line from the previous period
+					// For each player in the current period's line, record their line in the previous period
 					line.players.forEach(function(player) {
 						var prevLineFound = false;
 						prevLines.forEach(function(prevLine, prevLineIdx) {
@@ -219,63 +196,40 @@ function updateData() {
 						if (!prevLineFound) { playersPrevLines.push(-100); }
 					});
 
-					// Store the players' previous lines
+					// Store the results
 					line.prevLines = playersPrevLines;
 				});
 			});
 		});
 	});
-
-	return;
-
-	/*
-	*
-	* Figure out which lines to display for each period
-	*
-	*/
-	lineData = [];
-
-	// Loop through each block (period, score situation, etc.)
-	nestedData.forEach(function(blk, i) {
-
-		lineData.push([]); // block
-		lineData[i].push([], []); // [away lines, home lines]
-
-		// Loop through "home" and "away" team-lines
-		blk.values.forEach(function(tm) {
-
-			// We want data to be stored as [away, home], so get the team index
-			var tmIdx = 1;
-			if (tm.key.indexOf("away&") >= 0) { tmIdx = 0; }
-
-			// Loop through the team's lines - first sort lines by toi
-			var lnCount = 0;
-			var includedPlayers = [];
-			tm.values = tm.values.sort(function(a, b) { return b.toi - a.toi; });
-			tm.values.forEach(function(ln) {
-
-				// Split up line key into individual players
-				ln.players = ln.key.split("&");
-
-				ln.venue = tm.key.substring(0, tm.key.indexOf("&"));
-				ln.team = tm.key.substring(tm.key.indexOf("&") + 1);
-
-				// Do nothing if we already have the desired number of lines
-				if (lnCount === numLines) { return; }
-
-				if (includedPlayers.indexOf(ln.players[0]) < 0 && includedPlayers.indexOf(ln.players[1]) < 0 && includedPlayers.indexOf(ln.players[2]) < 0) {
-					// Store line data
-					lineData[i][tmIdx].push(ln);
-					// Prevent players from included in other lines, and increment line count
-					includedPlayers.push(ln.players[0], ln.players[1], ln.players[2]);
-					lnCount++;
-				}
-			});
-		});
-	});
-
-	appendPlot();
 }
+
+//
+//
+// OLD
+//
+//
+
+var numLines = 4;
+var lineHeight = 24;
+var lineWidth = 150;
+
+var numBlocks = 3;
+var blockHGap = lineWidth / 2;
+var blockVGap = lineHeight;
+
+var blockHeight = 3 * lineHeight;
+var blockWidth = numLines * lineWidth;
+
+var svgWidth = numBlocks * (blockWidth + blockHGap) - blockHGap;
+var svgHeight = numBlocks * (blockHeight + blockVGap) - blockVGap;
+
+
+var lineData = [];
+
+
+var scoreDiff = 4;
+var strengthDiff = "all";
 
 function appendPlot() {
 
