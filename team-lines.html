@@ -14,6 +14,7 @@
 var inFile = "combos_sample2.csv";
 var game = 21201;
 var data = [];
+var playerDict = [];
 
 /*
 *
@@ -22,33 +23,80 @@ var data = [];
 */
 
 d3.csv(inFile, function(d) {
-	// Accessor function: Filter out data belonging to other games
+	// Accessor function
+	// Filter out data belonging to other games
 	if (+d.gcode === game) {
 
-		// Only return rows for 3 forward combinations
+		// Only return rows for 3F combinations and 2D combinations
+		var lineType = "";
 		if (d.p3 !== "NA" && d.p4 === "NA"
 			&& d["POS.1"] !== "D" && d["POS.2"] !== "D" && d["POS.3"] !== "D"
 			&& d["POS.1"] !== "G" && d["POS.2"] !== "G" && d["POS.3"] !== "G") {
+			lineType = "f";
+		} else if (d.p2 !== "NA" && d.p3 === "NA"
+			&& d["POS.1"] === "D" && d["POS.2"] === "D") {
+			lineType = "d";
+		}
 
-			return {
+		// Store line data
+		// score.diff.cat: 0 = away leading by 3+ ... 3 = tied ... 6 = home leading by 3+
+		// strength.cat: relative to the home team, so 5v4 is 5 home skaters, 4 away
+		if (lineType === "d" || lineType === "f") {
+			var dataPt = {
+				type: "d",
 				ca: +d.CA,
 				cf: +d.CF,
 				toi: +d.TOI,
-				p1: d.p1,
-				p2: d.p2,
-				p3: d.p3,
-				scoreDiffCat: +d["score.diff.cat"],
-				strengthCat: d["strength.cat"],
+				players: [d.p1, d.p2],
+				names: [d["NAME.1"], d["NAME.2"]],
+				positions: [d["POS.1"], d["POS.2"]],
+				scoreDiff: +d["score.diff.cat"],
+				strengthDiff: d["strength.cat"],
 				period: +d.period,
 				team: d.team,
 				venue: d.venue
 			};
+			// For 3F lines, append the 3rd player's data
+			if (lineType === "f") {
+				dataPt.type = "f";
+				dataPt.players.push(d.p3);
+				dataPt.names.push(d["NAME.3"]);
+				dataPt.positions.push(d["POS.3"]);
+			}
+			return dataPt;
 		}
 	}
 }, function(error, rows) {
 	// Callback function
+	// Nest data by period (or score situation or strengths)
+	// Then nest by "home" and "away"
+	// Then nest by line type: "f" or "d"
+	// Then nest by line - each line will have multiple rows of data (one row for each combination of scoreDiff and strengthDiff)
 	data = rows;
-	formatData();
+	nestedData = [];
+	nestedData = d3.nest()
+		.key(function(d) { return d.period; })
+		.key(function(d) { return d.venue + "&" + d.team; })
+		.key(function(d) { return d.type; })
+		.key(function(d) { return d.players; })
+		.entries(data);
+
+	// Restore meta data to the parent data elements
+	nestedData.forEach(function(period) {
+		period.values.forEach(function(team) {
+			team.venue = team.key.substring(0, team.key.indexOf("&"));
+			team.team = team.key.substring(team.key.indexOf("&") + 1);
+			team.values.forEach(function(lineType) {
+				lineType.values.forEach(function(line) {
+					line.players = line.key.split(",");
+					line.names = line.values[0].names;
+					line.positions = line.values[0].positions;
+				});
+			});
+		});
+	});
+
+	updateData();
 });
 
 /*
@@ -59,7 +107,7 @@ d3.csv(inFile, function(d) {
 
 var numLines = 4;
 var lineHeight = 24;
-var lineWidth = 130;
+var lineWidth = 150;
 
 var numBlocks = 3;
 var blockHGap = lineWidth / 2;
@@ -74,27 +122,111 @@ var svgHeight = numBlocks * (blockHeight + blockVGap) - blockVGap;
 var nestedData = [];
 var lineData = [];
 
-function formatData() {
+var scoreDiff = 4;
+var strengthDiff = "all";
 
-	// Nested data by period (or score situation or strengths), then nest by "home" and "away"
-	// Then nest by lines, because each lines will have multiple rows of data (if we initially nested by periods, then each combination of score situation and strength will have a row)
-	nestedData = [];
-	nestedData = d3.nest()
-		.key(function(d) { return d.period; })
-		.key(function(d) { return d.venue + "&" + d.team; })
-		.key(function(d) { return d.p1 + "&" + d.p2 + "&" + d.p3; })
-		.entries(data);
+function updateData() {
 
-	// Sum each line's rows
-	nestedData.forEach(function(blk) {
-		blk.values.forEach(function(tm) {
-			tm.values.forEach(function(ln) {
-				ln.cf = d3.sum(ln.values, function(d) { return d.cf; });
-				ln.ca = d3.sum(ln.values, function(d) { return d.ca; });
-				ln.toi = d3.sum(ln.values, function(d) { return d.toi; });
+	/*
+	*
+	* Aggregate data for each line based on the selected scoreDiff and strengthDiff
+	*
+	*/
+
+	nestedData.forEach(function(period) {
+		period.values.forEach(function(team) {
+			team.values.forEach(function(lineType) {
+				lineType.values.forEach(function(line) {
+					// A line will contain multiple rows of data: one row for each combination of strengthDiff and scoreDiff
+					// Sum only the rows that match the selected scoreDiff and strengthDiff
+					var targetRows = line.values.filter(function(d) { return 1 === 1; });
+					line.cf = d3.sum(targetRows, function(d) { return d.cf; });
+					line.ca = d3.sum(targetRows, function(d) { return d.ca; });
+					line.toi = d3.sum(targetRows, function(d) { return d.toi; });
+				});
 			});
 		});
 	});
+
+	/*
+	*
+	* Flag which lines to display for each period
+	*
+	*/
+
+	nestedData.forEach(function(period) {
+		period.values.forEach(function(team) {
+			team.values.forEach(function(lineType) {
+				// Sort the lines by their total toi, then pick the top X lines, but without repeating players
+				lineType.values = lineType.values.sort(function(a, b) { return b.toi - a.toi; });
+
+				var limit = 4;
+				if (lineType.key === "d") { limit = 3; }
+
+				var includedPlayers = [];
+				var lineCount = 0;
+
+				lineType.values.forEach(function(line) {
+
+					line.isDisplayed = false;
+					if (lineCount < limit) {
+						var addLine = true;
+						line.players.forEach(function(p) {
+							if (includedPlayers.indexOf(p) >= 0) { addLine = false; }
+						})
+						if (addLine) {
+							line.isDisplayed = true;
+							includedPlayers = includedPlayers.concat(line.players);
+							lineCount++;
+						}
+					}
+				});
+			});
+		});
+	});
+
+	/*
+	*
+	* For the displayed lines, identify player movements
+	*
+	*/
+
+	nestedData.forEach(function(period, periodIdx) {
+
+		period.values.forEach(function(team, teamIdx) {
+			team.values.forEach(function(lineType, lineTypeIdx) {
+				lineType.values.forEach(function(line) {
+
+					// Get the displayed lines from the previous period (for the same team and lineType) - blank if there's no previous period
+					var prevLines = [];
+					if (periodIdx > 0) {
+						nestedData[periodIdx - 1].values[teamIdx].values[lineTypeIdx].values;
+						prevLines = prevLines.filter(function(d) { return d.isDisplayed === true; });
+					}
+
+					// Array to store each player's previous line (stored in the same order as the player ids)
+					var playersPrevLines = [];
+
+					// Get the player's line from the previous period
+					line.players.forEach(function(player) {
+						var prevLineFound = false;
+						prevLines.forEach(function(prevLine, prevLineIdx) {
+							if (!prevLineFound && prevLine.players.indexOf(player) >= 0) {
+								playersPrevLines.push(prevLineIdx);
+								prevLineFound = true;
+							}
+						});
+						if (!prevLineFound) { playersPrevLines.push(-100); }
+					});
+
+					// Store the players' previous lines
+					line.prevLines = playersPrevLines;
+				});
+			});
+		});
+	});
+
+	return;
 
 	/*
 	*
@@ -179,7 +311,14 @@ function appendPlot() {
 		.style("font-family", "sans-serif")
 		.style("dominant-baseline", "middle")
 		.style("fill", "#aaa")
-		.text(function(d) { return d; });
+		.style("text-transform", "capitalize")
+		.text(function(d) {
+			var plyrProps = playerDict.filter(function(p) { return p.id === d;})[0];
+			var name = plyrProps.name;
+			var firstname = name.substring(0, name.indexOf(" "));
+			var lastname = name.substring(name.lastIndexOf(" ") + 1);
+			return lastname[0] + lastname.slice(1).toLowerCase() + ", " + firstname[0];
+		});
 
 	highlightChanges();
 }
@@ -248,30 +387,24 @@ function highlightChanges() {
 					var venue = "away";
 					if (tmIdx === 1) { venue = "home"; }
 					var targetG = d3.select(".block.block-" + i).select(".team." + venue);
-					// targetG.append("line")
-					// 	.attr("class", "movement")
-					// 	.attr("x1", p.lines[i-1][0] * lineWidth + lineWidth / 2)
-					// 	.attr("x2", p.lines[i][0] * lineWidth + lineWidth / 2)
-					// 	.attr("y1", p.lines[i-1][1] * lineHeight + lineHeight / 2)
-					// 	.attr("y2", p.lines[i][1] * lineHeight + lineHeight / 2)
-					// 	.attr("stroke", function() {
-					// 		if (p.lines[i-1][0] < p.lines[i][0]) { return "red"; }
-					// 		else { return "blue"; }
-					// 	});
+
 					targetG.append("text")
 						.attr("class", "movement")
-						.attr("x", p.lines[i][0] * lineWidth - 30)
+						.attr("x", p.lines[i][0] * lineWidth - 5)
 						.attr("y", p.lines[i][1] * lineHeight + lineHeight / 2)
 						.style("dominant-baseline", "middle")
+						.style("text-anchor", "end")
 						.style("fill", function() {
+							return "#222";
 							if (p.lines[i-1][0] < p.lines[i][0]) { return "red"; }
 							else { return "blue"; }
 						})
 						.style("font-family", "Courier")
 						.text(function() {
 							var diff = Math.abs(p.lines[i][0] - p.lines[i-1][0]);
-							if (p.lines[i-1][0] < p.lines[i][0]) { return "↘" + diff; }
-							else { return "↗" + diff; }
+							var flag = "↗";
+							if (p.lines[i-1][0] < p.lines[i][0]) { flag = "↘"; }
+							return flag + diff;
 						})
 				}
 			}
