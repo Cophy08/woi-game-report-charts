@@ -5,6 +5,8 @@
 	<title>Team Lines</title>
 	<link rel="stylesheet" type="text/css" href="team-lines.css">
 	<script src="//cdnjs.cloudflare.com/ajax/libs/d3/3.5.5/d3.min.js"></script>
+	<link href="https://fonts.googleapis.com/css?family=Roboto:400,500,700,900" rel="stylesheet" type="text/css">
+    <link href="https://fonts.googleapis.com/css?family=Roboto+Mono:400" rel="stylesheet" type="text/css">
 </head>
 <body>
 	<svg id="team-lines"></svg>
@@ -27,6 +29,7 @@ var numOLines = 4;
 */
 
 d3.csv(inFile, function(d) {
+
 	// Accessor function - used to filter out data belonging to other games
 	if (+d.gcode === game) {
 
@@ -52,7 +55,7 @@ d3.csv(inFile, function(d) {
 				players: [d.p1, d.p2],
 				names: [d["NAME.1"], d["NAME.2"]],
 				positions: [d["POS.1"], d["POS.2"]],
-				goals: [d["p1G"], d["p2G"]],
+				goals: [+d["p1G"], +d["p2G"]],
 				scoreDiff: +d["score.diff.cat"], // 0 = away leading by 3+ ... 3 = tied ... 6 = home leading by 3+
 				strengthDiff: d["strength.cat"], // Relative to the home team - e.g., 5v4 is 5 home skaters, 4 away
 				period: +d.period,
@@ -64,7 +67,7 @@ d3.csv(inFile, function(d) {
 				dataPt.type = "f";
 				dataPt.players.push(d.p3);
 				dataPt.names.push(d["NAME.3"]);
-				dataPt.goals.push(d["p3G"]);
+				dataPt.goals.push(+d["p3G"]);
 				dataPt.positions.push(d["POS.3"]);
 			}
 			return dataPt;
@@ -122,6 +125,17 @@ function updateData() {
 					line.cf = d3.sum(targetRows, function(d) { return d.cf; });
 					line.ca = d3.sum(targetRows, function(d) { return d.ca; });
 					line.toi = d3.sum(targetRows, function(d) { return d.toi; });
+					line.ga = d3.sum(targetRows, function(d) { return d.ga; });
+
+					// Get each player's goal totals
+					var playerGfs = [];
+					line.players.forEach(function(p, idx) {
+						var playerGf = d3.sum(targetRows, function(d) { return d.goals[idx]; });
+						if (playerGf > 0) { console.log(p, line.names); }
+						playerGfs.push(playerGf);
+					});
+					line.playerGfs = playerGfs;
+
 				});
 			});
 		});
@@ -169,16 +183,21 @@ function updateData() {
 	*
 	*/
 
-	nestedData.forEach(function(period, periodIdx) {
-		period.values.forEach(function(team, teamIdx) {
-			team.values.forEach(function(lineType, lineTypeIdx) {
-				lineType.values.forEach(function(line) {
+	nestedData.forEach(function(period) {
+		var thisPeriod = period.key;
+		period.values.forEach(function(team) {
+			var thisVenue = team.venue;
+			team.values.forEach(function(lineType) {
+				var thisLineType = lineType.key;
+				lineType.values.forEach(function(line, lineIdx) {
 
 					// Get the displayed lines from the previous period (for the same team and lineType)
 					var prevLines = [];
-					if (periodIdx > 0) {
-						nestedData[periodIdx - 1].values[teamIdx].values[lineTypeIdx].values;
-						prevLines = prevLines.filter(function(d) { return d.isDisplayed === true; });
+					if (thisPeriod > 1) {
+						prevLines = nestedData.filter(function(d) { return (+d.key) === (thisPeriod - 1); })[0]
+							.values.filter(function(d) { return d.venue === thisVenue; })[0]
+							.values.filter(function(d) { return d.key === thisLineType; })[0]
+							.values.filter(function(d) { return d.isDisplayed === true; });
 					}
 
 					// Array to store each player's previous line - stored in the same order as the line's player ids
@@ -198,175 +217,103 @@ function updateData() {
 
 					// Store the results
 					line.prevLines = playersPrevLines;
+					line.lineRank = lineIdx;
 				});
 			});
 		});
 	});
+
+	plotData();
 }
 
-//
-//
-// OLD
-//
-//
-
-var numLines = 4;
-var lineHeight = 24;
-var lineWidth = 150;
-
-var numBlocks = 3;
-var blockHGap = lineWidth / 2;
-var blockVGap = lineHeight;
-
-var blockHeight = 3 * lineHeight;
-var blockWidth = numLines * lineWidth;
-
-var svgWidth = numBlocks * (blockWidth + blockHGap) - blockHGap;
-var svgHeight = numBlocks * (blockHeight + blockVGap) - blockVGap;
-
-
-var lineData = [];
-
-
-var scoreDiff = 4;
-var strengthDiff = "all";
-
-function appendPlot() {
+function plotData() {
+	var numPeriods = nestedData.length;
+	var cellH = 24;
+	var cellW = 120;
+	var hGap = 50;
+	var vGap = 24;
 
 	var svg = d3.select("#team-lines")
-		.style("width", svgWidth + "px")
-		.style("height", svgHeight + "px")
+		.style("width", (numPeriods * cellW * numOLines) + hGap * (numPeriods - 1) + "px")
+		.style("height", 2 * cellH * 4 + vGap + "px")
 		.append("g");
 
-	var blocks = svg.selectAll("g.block")
-		.data(lineData);
-	blocks.enter().append("g")
-		.attr("class", function(d, i) { return "block block-" + i; })
-		.attr("transform", function(d, i) { return "translate(" + (i * (blockWidth + blockHGap)) + ",0)"; });
+	var periodGs = svg.selectAll("g.period")
+		.data(nestedData)
+		.enter().append("g")
+			.attr("class", "period")
+			.attr("transform", function(d, i) { return "translate(" + (i * cellW * numDLines + i * hGap) + ",0)"; });
 
-	var teams = blocks.selectAll("g.team")
-		.data(function(d) { return d; });
-	teams.enter().append("g")
-		.attr("class", function(d) { return "team " + d[0].venue; })
-		.attr("transform", function(d, i) { return "translate(0," + (i * (blockHeight + blockVGap)) + ")"; });
+	var teamGs = periodGs.selectAll("g.team")
+		.data(function(d) { return d.values; })
+		.enter().append("g")
+			.attr("class", function(d) { return "team " + d.venue; })
+			.attr("transform", function(d, i) { return "translate(0," + (i * cellH * 4 + i * vGap) + ")"; });
 
-	var lines = teams.selectAll("g.line")
-		.data(function(d) { return d; });
-	lines.enter().append("g")
-		.attr("class", "line")
-		.attr("transform", function(d, i) { return "translate(" + (i * lineWidth) + ",0)"; });
-
-	var players = lines.selectAll("text.player")
-		.data(function(d) {return d.players; });
-	players.enter().append("text")
-		.attr("class", "player")
-		.attr("x", 0)
-		.attr("y", function(d, i) { return i * lineHeight + lineHeight / 2; })
-		.style("font-family", "sans-serif")
-		.style("dominant-baseline", "middle")
-		.style("fill", "#aaa")
-		.style("text-transform", "capitalize")
-		.text(function(d) {
-			var plyrProps = playerDict.filter(function(p) { return p.id === d;})[0];
-			var name = plyrProps.name;
-			var firstname = name.substring(0, name.indexOf(" "));
-			var lastname = name.substring(name.lastIndexOf(" ") + 1);
-			return lastname[0] + lastname.slice(1).toLowerCase() + ", " + firstname[0];
+	// Forwards
+	var lineGs = teamGs.selectAll("g.line.f")
+		.data(function(d) {
+			var lines = d.values.filter(function(v) { return v.key === "d"; })[0];
+			return lines.values.filter(function(v) { return v.isDisplayed === true; });
 		});
+	lineGs.enter().append("g")
+		.attr("class", "line f")
+		.attr("transform", function(d, i) { return "translate(" + (i * cellW) + ",0)"; });
 
-	highlightChanges();
-}
-
-function highlightChanges() {
-
-
-
-	[0, 1].forEach(function(tmIdx) {
-
-		var players = [];
-		var teamLines = [];
-		lineData.forEach(function(blk, i) {
-			teamLines.push([]);
-			blk[tmIdx].forEach(function(ln) {
-				teamLines[i].push(ln.players);
-				ln.players.forEach(function(p) {
-					if (players.filter(function(d) { return d.player === p; }).length <= 0) {
-						players.push({ player: p });
-					}
-				});
+	// Player names
+	lineGs.selectAll("text.name")
+		.data(function(d) {
+			var labelData = [];
+			d.names.forEach(function(n, idx) {
+				labelData.push([n, d.playerGfs[idx]]);
 			});
-		});
+			return labelData;
+		})
+		.enter().append("text")
+			.attr("class", "name")
+			.style("fill", "#ccc")
+			.attr("x", 20)
+			.attr("y", function(d, i) { return i * cellH + cellH / 2; })
+			.html(function(d) {
+				var gfStr = "";
+				for (var j = 0; j < d[1]; j++) { gfStr += "+"; }
+				gfStr = "<tspan> " + gfStr + "</tspan>";
 
-		/*
-		*
-		* Record each player's line by period
-		*
-		*/
-
-		players.forEach(function(p) {
-			var plyrLinesByPer = [];
-
-			// Loop through each block
-			teamLines.forEach(function(blk) {
-
-				// Loop through the lines in each block
-				var isFound = false;
-				blk.forEach(function(ln, i) {
-
-					if (isFound) { return; }
-
-					// Store position as [line 1-4, row position 1-3]
-					if (ln.indexOf(p.player) >= 0) {
-						isFound = true;
-						plyrLinesByPer.push([i, ln.indexOf(p.player)]);
-					}
-
-				});
-				if (!isFound) { plyrLinesByPer.push([-1, -1]); }
+				return d[0].substring(d[0].lastIndexOf(" ") + 1) + gfStr;
 			});
 
-			p.lines = plyrLinesByPer;
+	// Line shifts
+	lineGs.selectAll("text.shift")
+		.data(function(d) {
+			var lineShifts = [];
+			d.prevLines.forEach(function(l) {
+				if (l < 0) { lineShifts.push(0); }
+				else { lineShifts.push(l - d.lineRank); }
+			});
+			return lineShifts;
+		})
+		.enter().append("text")
+			.attr("class", "shift")
+			.attr("x", 0)
+			.attr("y", function(d, i) { return i * cellH + cellH / 2; })
+			.text(function(d) { 
+				if (d === 0) { return ""; }
+				else if (d > 0) { return "↗" + d; }
+				else if (d < 0) { return "↘" + Math.abs(d); }
+			});
+
+	// Line TOIs
+	lineGs.append("text")
+		.attr("class", "toi")
+		.attr("x", 20)
+		.attr("y", 2 * cellH + cellH / 2)
+		.text(function(d) { 
+			var outStr = Math.round(d.toi) + " min";
+			if (d.cf > 0) { outStr += ", " + d.cf + "cf"; }
+			if (d.ca > 0) { outStr += ", " + d.ca + "ca"; }
+			if (d.ga > 0) { outStr += ", " + d.ga + "GA"; }
+			return outStr;
 		});
-
-		/*
-		*
-		* Highlight player movements
-		*
-		*/
-		players.forEach(function(p) {
-			for (var i = 1; i < p.lines.length; i++) {
-				if (p.lines[i][0] !== p.lines[i - 1][0]) {
-					//console.log(p.player + " changed: " + p.lines[i - 1][0] + " to " + p.lines[i][0]);
-
-					var venue = "away";
-					if (tmIdx === 1) { venue = "home"; }
-					var targetG = d3.select(".block.block-" + i).select(".team." + venue);
-
-					targetG.append("text")
-						.attr("class", "movement")
-						.attr("x", p.lines[i][0] * lineWidth - 5)
-						.attr("y", p.lines[i][1] * lineHeight + lineHeight / 2)
-						.style("dominant-baseline", "middle")
-						.style("text-anchor", "end")
-						.style("fill", function() {
-							return "#222";
-							if (p.lines[i-1][0] < p.lines[i][0]) { return "red"; }
-							else { return "blue"; }
-						})
-						.style("font-family", "Courier")
-						.text(function() {
-							var diff = Math.abs(p.lines[i][0] - p.lines[i-1][0]);
-							var flag = "↗";
-							if (p.lines[i-1][0] < p.lines[i][0]) { flag = "↘"; }
-							return flag + diff;
-						})
-				}
-			}
-		});
-		console.log(players);
-
-	});
-
 }
 </script>
 </html>

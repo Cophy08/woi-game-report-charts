@@ -1,0 +1,13 @@
+svg {
+	font-family: Roboto;
+	font-size: 12px;
+}
+
+svg text {
+	alignment-baseline: dominant-baseline;
+	text-transform: lowercase;
+}
+
+svg tspan {
+	fill: black;
+}
