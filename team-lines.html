@@ -48,6 +48,7 @@ d3.csv(inFile, function(d) {
 		if (lineType === "d" || lineType === "f") {
 			var dataPt = {
 				type: "d",
+				combocode: d.combocode,
 				ca: +d.CA,
 				cf: +d.CF,
 				ga: +d.GA,
@@ -80,7 +81,7 @@ d3.csv(inFile, function(d) {
 		.key(function(d) { return d.period; }) // Nest data by period (or score situation or strengths)
 		.key(function(d) { return d.venue + "&" + d.team; }) // Then nest by "home" and "away"
 		.key(function(d) { return d.type; }) // Then nest by line type: "f" or "d"
-		.key(function(d) { return d.players; }) // Then nest by line - each line will have multiple rows of data (one row for each combination of scoreDiff and strengthDiff)
+		.key(function(d) { return d.combocode; }) // Then nest by line - each line will have multiple rows of data (one row for each combination of scoreDiff and strengthDiff)
 		.entries(data);
 
 	// Restore meta data to each level of the nested data
@@ -90,7 +91,8 @@ d3.csv(inFile, function(d) {
 			team.team = team.key.substring(team.key.indexOf("&") + 1);
 			team.values.forEach(function(lineType) {
 				lineType.values.forEach(function(line) {
-					line.players = line.key.split(",");
+					line.combocode = line.key;
+					line.players = line.values[0].players;
 					line.names = line.values[0].names;
 					line.positions = line.values[0].positions;
 				});
@@ -121,7 +123,8 @@ function updateData() {
 				lineType.values.forEach(function(line) {
 					// A line will contain multiple rows of data: one row for each combination of strengthDiff and scoreDiff
 					// Sum only the rows that match the selected scoreDiff and strengthDiff
-					var targetRows = line.values.filter(function(d) { return 1 === 1; });
+					//var targetRows = line.values.filter(function(d) { return 1 === 1; });
+					var targetRows = line.values;
 					line.cf = d3.sum(targetRows, function(d) { return d.cf; });
 					line.ca = d3.sum(targetRows, function(d) { return d.ca; });
 					line.toi = d3.sum(targetRows, function(d) { return d.toi; });
@@ -152,7 +155,6 @@ function updateData() {
 			team.values.forEach(function(lineType) {
 				// Sort the lines by their total toi, then pick the top X lines, but without repeating players
 				lineType.values = lineType.values.sort(function(a, b) { return b.toi - a.toi; });
-
 				var includedPlayers = [];
 				var lineCount = 0;
 				var limit = numOLines;
