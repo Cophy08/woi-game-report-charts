@@ -134,7 +134,7 @@ function updateData() {
 					var playerGfs = [];
 					line.players.forEach(function(p, idx) {
 						var playerGf = d3.sum(targetRows, function(d) { return d.goals[idx]; });
-						if (playerGf > 0) { console.log(p, line.names); }
+						//if (playerGf > 0) { console.log(p, line.names); }
 						playerGfs.push(playerGf);
 					});
 					line.playerGfs = playerGfs;
@@ -225,10 +225,10 @@ function updateData() {
 		});
 	});
 
-	plotData();
+	plotData2();
 }
 
-function plotData() {
+function plotData1() {
 	var numPeriods = nestedData.length;
 	var cellH = 24;
 	var cellW = 120;
@@ -316,6 +316,74 @@ function plotData() {
 			if (d.ga > 0) { outStr += ", " + d.ga + "GA"; }
 			return outStr;
 		});
+}
+
+function plotData2() {
+	var svg = d3.select("#team-lines")
+		.style("width", "2000px")
+		.style("height", "2000px")
+		.append("g");
+
+	var plotData = nestedData[0]; // 1st period
+	plotData = plotData.values[0]; // Home team
+	plotData = plotData.values[0]; // Forward lines
+	plotData = plotData.values;
+
+	var players = [];
+	plotData.forEach(function(d) {
+		d.players.forEach(function(p) {
+			if (players.indexOf(p) < 0) {
+				players.push(p);
+			}
+		});
+	});
+
+	var angle = d3.scale.ordinal()
+		.domain(players)
+		.range(d3.range(0, (360 - 360 / players.length) + 360 / players.length, 360 / players.length));
+
+	var cellW = 200;
+	var cellH = cellW;
+	var lineGs = svg.selectAll("g.line")
+		.data(plotData)
+		.enter().append("g")
+			.attr("class", "line")
+			.attr("transform", function(d, i) { return "translate(" + (i * cellW) + ",0)"; });
+
+	// var playerLines = lineGs.selectAll("line.player")
+	// 	.data(function(d) { return d.players; })
+	// 	.enter().append("line")
+	// 		.attr("class", "player")
+	// 		.attr("x1", cellW / 2)
+	// 		.attr("y1", 0)
+	// 		.attr("x2", cellW / 2)
+	// 		.attr("y2", cellH / 2)
+	// 		.style("stroke", "black")
+	// 		.attr("transform", function(d) { return "rotate(" + angle(d) + " " + (cellW / 2) + " " + (cellH / 2) + ")"; });
+
+	var playerLabels = lineGs.selectAll("text.player")
+		.data(function(d) { return d.players; })
+		.enter().append("text")
+			.attr("class", "player")
+			.attr("x", cellW / 2)
+			.attr("y", cellH / 2)
+			.style("font-size", 10)
+			.style("dominant-baseline", "middle")
+			.text(function(d) { return "┈┈┈" + d; })
+			.attr("transform", function(d) { return "rotate(" + (angle(d) - 90) + " " + (cellW / 2) + " " + (cellH / 2) + ")"; });
+
+	var toiLabels = lineGs.selectAll("text.toi")
+		.data(function(d) { console.log(d); return [d.toi]; })
+		.enter().append("text")
+			.attr("class", "toi")
+			.attr("x", cellW / 2)
+			.attr("y", cellH / 2)
+			.style("font-size", 10)
+			.style("font-weight", 900)
+			.style("dominant-baseline", "middle")
+			.style("text-anchor", "middle")
+			.text(function(d) { return Math.round(d) + "min"; });
+
 }
 </script>
 </html>
