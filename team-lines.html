@@ -14,7 +14,7 @@
 <script>
 
 var inFile = "combos_sample2.csv";
-var game = 21201;
+var game = 21201; //21201 or 21202
 
 var data = [];
 var nestedData = [];
@@ -225,7 +225,7 @@ function updateData() {
 		});
 	});
 
-	plotData2();
+	plotData3();
 }
 
 function plotData1() {
@@ -384,6 +384,73 @@ function plotData2() {
 			.style("text-anchor", "middle")
 			.text(function(d) { return Math.round(d) + "min"; });
 
+}
+
+function plotData3() {
+	var numPeriods = nestedData.length;
+	var colW = 240;
+	var colH = 200;
+	var hGap = 20;
+	var vGap = 20;
+
+	var svg = d3.select("#team-lines")
+		.style("width", (numPeriods * colW) + hGap * (numPeriods - 1) + "px")
+		.style("height", 2 * colH + vGap + "px")
+		.style("font-family", "Roboto Mono")
+		.append("g");
+
+	var periodGs = svg.selectAll("g.period")
+		.data(nestedData)
+		.enter().append("g")
+			.attr("class", "period")
+			.attr("transform", function(d, i) { return "translate(" + (i * colW + i * hGap) + ",0)"; });
+
+	var teamGs = periodGs.selectAll("g.team")
+		.data(function(d) { return d.values; })
+		.enter().append("g")
+			.attr("class", function(d) { return "team " + d.venue; })
+			.attr("transform", function(d, i) { return "translate(0," + (i * colH + i * vGap) + ")"; });
+
+	var y = d3.scale.linear()
+		.domain([0, 8])
+		.range([colH, 0]);
+
+	var fLines = teamGs.selectAll("text.line.f")
+		.data(function(d) {
+			var lines = d.values.filter(function(v) { return v.key === "f"; })[0];
+			return lines.values.filter(function(v) { return v.toi >= 1; });
+		})
+		.enter().append("text")
+			.attr("transform", "translate(95,0)")
+			.attr("class", "line f")
+			.attr("y", function(d, i) { return (i + 1) * 20; });
+
+	var dLines = teamGs.selectAll("text.line.d")
+		.data(function(d) {
+			var lines = d.values.filter(function(v) { return v.key === "d"; })[0];
+			return lines.values.filter(function(v) { return v.toi >= 1; });
+		})
+		.enter().append("text")
+			.attr("class", "line d")
+			.attr("y", function(d, i) { return (i + 1) * 20; });
+
+	var lines = teamGs.selectAll("text.line")
+		.attr("x", 0)
+		//.attr("y", function(d) { return y(d.toi); })
+		.style("fill-opacity", function(d) {
+			if (d.isDisplayed) { return 1; }
+			else { return 0.25; }
+		})
+		.style("alignment-baseline", "dominant-baseline")
+		.style("fill", "#222")
+		.text(function(d) {
+			var shortNames = [];
+			d.names.forEach(function(n) {
+				// TODO: If the last name is too short, add a padding character (probably the same as the array joiner) so that all names are the same length (since we're using a monospaced font)
+				shortNames.push(n.substring(n.indexOf(" ") + 1, n.indexOf(" ") + 5));
+			});
+			return shortNames.join("∙") + "∙" + Math.round(d.toi);
+		});
 }
 </script>
 </html>
